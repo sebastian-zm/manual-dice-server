@@ -112,7 +112,7 @@ async def list_tools():
     )]
 
 @app.call_tool()
-async def call_tool(name, arguments):
+async def handle_call_tool(name, arguments):
     if name != 'roll_dice':
         raise ValueError(f'Unknown tool: {name}')
     dice = arguments.get('dice', [])
