@@ -22,7 +22,7 @@ Add to your MCP configuration file (`~/Library/Application Support/Claude/claude
       "command": "nix-shell",
       "args": [
         "--pure",
-        "https://github.com/sebastian-zm/manual-dice-server.git",
+        "https://github.com/sebastian-zm/manual-dice-server/archive/main.tar.gz",
         "--run",
         "dice-roller-mcp"
       ],
