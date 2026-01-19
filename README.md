@@ -11,7 +11,30 @@ A Model Context Protocol (MCP) server that provides dice rolling functionality w
 
 ## Installation
 
-### Using `uvx` (recommended - no cloning needed!)
+### Using `nix-shell` (recommended)
+
+Add to your MCP configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, or equivalent):
+
+```json
+{
+  "mcpServers": {
+    "dice-roller": {
+      "command": "nix-shell",
+      "args": [
+        "--pure",
+        "https://github.com/sebastian-zm/manual-dice-server.git",
+        "--run",
+        "dice-roller-mcp"
+      ],
+      "env": {
+        "DISPLAY": ":0"
+      }
+    }
+  }
+}
+```
+
+### Using `uvx`
 
 Add to your MCP configuration file (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, or equivalent):
 
@@ -35,7 +58,7 @@ Add to your MCP configuration file (`~/Library/Application Support/Claude/claude
 
 **Note:** Requires [uv](https://github.com/astral-sh/uv) to be installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-### Option 2: Clone and install locally
+### Clone and install locally
 
 ```bash
 git clone https://github.com/sebastian-zm/manual-dice-server.git
