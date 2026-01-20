@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import asyncio
 import random
+import signal
+import sys
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
@@ -147,7 +149,15 @@ async def handle_call_tool(name, arguments):
         return [TextContent(type='text', text=f'Unexpected error: {str(e)}')]
 
 def main():
-    asyncio.run(async_main())
+    # Handle SIGTERM (signal 15) for graceful shutdown.
+    # Note: SIGKILL (signal 9) cannot be caught or ignored by design in Unix-like systems.
+    signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
+
+    try:
+        asyncio.run(async_main())
+    except KeyboardInterrupt:
+        # Handle SIGINT (Ctrl+C)
+        sys.exit(0)
 
 async def async_main():
     async with stdio_server() as (read_stream, write_stream):

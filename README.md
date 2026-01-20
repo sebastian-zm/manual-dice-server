@@ -19,12 +19,11 @@ Add to your MCP configuration file (`~/Library/Application Support/Claude/claude
 {
   "mcpServers": {
     "dice-roller": {
-      "command": "nix-shell",
+      "command": "nix",
       "args": [
-        "--pure",
-        "https://github.com/sebastian-zm/manual-dice-server/archive/main.tar.gz",
-        "--run",
-        "dice-roller-mcp"
+        "run",
+        "--refresh",
+        "github:sebastian-zm/manual-dice-server",
       ],
       "env": {
         "DISPLAY": ":0"
