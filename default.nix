@@ -73,4 +73,6 @@ in python.pkgs.buildPythonApplication {
     pkgs.gtk3
     pkgs.cairo
   ];
+
+  makeWrapperArgs = [ "--unset PYTHONPATH" ];
 }
