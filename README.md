@@ -23,7 +23,7 @@ Add to your MCP configuration file (`~/Library/Application Support/Claude/claude
       "args": [
         "run",
         "--refresh",
-        "github:sebastian-zm/manual-dice-server",
+        "github:sebastian-zm/manual-dice-server"
       ],
       "env": {
         "DISPLAY": ":0"
