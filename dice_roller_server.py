@@ -14,12 +14,16 @@ app = Server('dice-roller')
 
 class DiceRollDialog(Gtk.Dialog):
     def __init__(self, dice_specs):
-        super().__init__(title='🎲 Dice Roller')
+        super().__init__(title='Dice Roller')
         self.dice_specs = dice_specs
         self.spinbuttons = []
         self.set_default_size(320, -1)
         self.set_border_width(16)
+        self.set_position(Gtk.WindowPosition.CENTER) # Center on screen
+        self.set_modal(True) # Modal behavior
         self.setup_ui()
+        self.set_urgency_hint(True) # Bounce in dock
+        self.present() # Request focus
 
     def setup_ui(self):
         box = self.get_content_area()
@@ -49,11 +53,20 @@ class DiceRollDialog(Gtk.Dialog):
                 hbox.pack_start(spinbutton, False, False, 0)
                 box.pack_start(hbox, False, False, 2)
         box.pack_start(Gtk.Separator(), False, False, 4)
+        random_btn = Gtk.Button(label='Randomize')
+        random_btn.connect('clicked', self.on_random_clicked)
+        self.get_action_area().pack_start(random_btn, False, False, 0)
         cancel_btn = self.add_button('Cancel', Gtk.ResponseType.CANCEL)
-        ok_btn = self.add_button('Roll 🎲', Gtk.ResponseType.OK)
+        ok_btn = self.add_button('Accept', Gtk.ResponseType.OK)
         ok_btn.get_style_context().add_class('suggested-action')
         self.set_default_response(Gtk.ResponseType.OK)
         self.show_all()
+
+    def on_random_clicked(self, widget):
+        for sb in self.spinbuttons:
+            adj = sb.get_adjustment()
+            upper = int(adj.get_upper())
+            sb.set_value(random.randint(1, upper))
 
     def get_results(self):
         return [int(sb.get_value()) for sb in self.spinbuttons]
@@ -79,7 +92,7 @@ def system_roll(die_type):
 async def list_tools():
     return [Tool(
         name='roll_dice',
-        description='Roll dice either manually (user inputs results via dialog) or automatically (system generates random results). Accepts an array of dice specifications.',
+        description='Roll dice. Accepts an array of dice specifications.',
         inputSchema={
             'type': 'object',
             'properties': {
@@ -104,9 +117,9 @@ async def list_tools():
                 },
                 'mode': {
                     'type': 'string',
-                    'description': 'Rolling mode: manual for user input via dialog, auto for system-generated random rolls',
-                    'enum': ['manual', 'auto'],
-                    'default': 'auto'
+                    'description': 'Rolling mode: user for asking the user to roll dice and to input results via modal dialog, system for system-generated random rolls',
+                    'enum': ['user', 'system'],
+                    'default': 'system'
                 }
             },
             'required': ['dice']
@@ -118,11 +131,11 @@ async def handle_call_tool(name, arguments):
     if name != 'roll_dice':
         raise ValueError(f'Unknown tool: {name}')
     dice = arguments.get('dice', [])
-    mode = arguments.get('mode', 'auto')
+    mode = arguments.get('mode', 'system')
     if not dice:
         return [TextContent(type='text', text='Error: No dice specified')]
     try:
-        if mode == 'manual':
+        if mode == 'user':
             all_rolls = prompt_user_for_rolls(dice)
             results, idx = [], 0
             for dice_spec in dice:
@@ -142,7 +155,7 @@ async def handle_call_tool(name, arguments):
                     results.append(f'd{die_type}: {rolls[0]}')
                 else:
                     results.append(f'{amount}d{die_type}: [{", ".join(map(str, rolls))}] (total: {sum(rolls)})')
-        return [TextContent(type='text', text=f'({"manual" if mode == "manual" else "auto"})\n' + '\n'.join(results))]
+        return [TextContent(type='text', text=f'({"user" if mode == "user" else "system"})\n' + '\n'.join(results))]
     except ValueError as e:
         return [TextContent(type='text', text=f'Error: {str(e)}')]
     except Exception as e:
@@ -150,7 +163,6 @@ async def handle_call_tool(name, arguments):
 
 def main():
     # Handle SIGTERM (signal 15) for graceful shutdown.
-    # Note: SIGKILL (signal 9) cannot be caught or ignored by design in Unix-like systems.
     signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
 
     try:
