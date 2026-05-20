@@ -117,6 +117,17 @@ export class DiceRollerAgent extends McpAgent {
   }
 
   private async rollUser(exprs: string[], description: string | undefined, multi: boolean) {
+    const caps = this.server.server.getClientCapabilities();
+    if (!caps?.elicitation) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: 'Error: mode "user" requires MCP elicitation, which this client does not support. Use mode "system" or "transparent" instead.',
+        }],
+        isError: true,
+      };
+    }
+
     type ExprInfo = { expr: string; groups: string[]; error?: string };
     const exprInfos: ExprInfo[] = exprs.map(expr => {
       try {
