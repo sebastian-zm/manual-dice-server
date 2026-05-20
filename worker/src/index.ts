@@ -6,7 +6,7 @@ import { DiceResult } from './types';
 
 const ElicitResultSchema = z.object({
   action: z.enum(['accept', 'decline', 'cancel']),
-  content: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  content: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
 });
 
 const EXPRESSION_DESCRIPTION =
@@ -117,90 +117,87 @@ export class DiceRollerAgent extends McpAgent {
   }
 
   private async rollUser(exprs: string[], description: string | undefined, multi: boolean) {
-    const blocks: string[] = [];
+    type ExprInfo = { expr: string; groups: string[]; error?: string };
+    const exprInfos: ExprInfo[] = exprs.map(expr => {
+      try {
+        return { expr, groups: this.parser.listGroups(expr) };
+      } catch (err: any) {
+        return { expr, groups: [], error: err.message };
+      }
+    });
 
-    for (const expr of exprs) {
-      const block = await this.rollOneUser(expr, description, multi);
-      if (block === null) {
+    // Flatten all dice groups from all expressions into one elicitation form.
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    let keyIdx = 0;
+    for (const { groups } of exprInfos) {
+      for (const groupExpr of groups) {
+        const key = `roll_${++keyIdx}`;
+        properties[key] = {
+          type: 'integer',
+          title: groupExpr,
+          description: `Enter your total for ${groupExpr}`,
+        };
+        required.push(key);
+      }
+    }
+
+    let allValues: number[] = [];
+    if (keyIdx > 0) {
+      const message = description
+        ? `${description} — roll the dice for: ${exprs.join(', ')}`
+        : `Roll the dice for: ${exprs.join(', ')}`;
+
+      let elicitResult: z.infer<typeof ElicitResultSchema>;
+      try {
+        elicitResult = await (this.server as any).server.request(
+          {
+            method: 'elicitation/create',
+            params: { message, requestedSchema: { type: 'object', properties, required } },
+          },
+          ElicitResultSchema,
+        );
+      } catch {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: this client does not support MCP elicitation. Use mode "system" or "transparent" instead.',
+          }],
+        };
+      }
+
+      if (elicitResult.action !== 'accept' || !elicitResult.content) {
         return { content: [{ type: 'text' as const, text: 'Roll cancelled.' }] };
       }
-      blocks.push(block);
+
+      allValues = Object.values(elicitResult.content) as number[];
+    }
+
+    // Distribute values back to each expression by slice.
+    const blocks: string[] = [];
+    let valueOffset = 0;
+    for (const { expr, groups, error } of exprInfos) {
+      if (error) {
+        blocks.push(`Error: ${error}`);
+        continue;
+      }
+      const exprValues = allValues.slice(valueOffset, valueOffset + groups.length);
+      valueOffset += groups.length;
+      let idx = 0;
+      try {
+        const result = this.parser.parse(expr, undefined, (_e) => {
+          if (idx < exprValues.length) return exprValues[idx++];
+          return 1;
+        });
+        const prefix = !multi && description ? `${description}\n` : '';
+        blocks.push(`${prefix}${formatTransparent(result)}`);
+      } catch (err: any) {
+        blocks.push(`Error: ${err.message}`);
+      }
     }
 
     const header = description && multi ? `${description}\n` : '';
     return { content: [{ type: 'text' as const, text: `${header}${blocks.join('\n\n')}` }] };
-  }
-
-  // Returns the formatted result block, or null if the user cancelled.
-  private async rollOneUser(
-    expression: string,
-    description: string | undefined,
-    multi: boolean,
-  ): Promise<string | null> {
-    let groups: string[];
-    try {
-      groups = this.parser.listGroups(expression);
-    } catch (err: any) {
-      return `Error: ${err.message}`;
-    }
-
-    if (groups.length === 0) {
-      // Pure arithmetic — nothing to elicit.
-      try {
-        const result = this.parser.parse(expression);
-        const prefix = !multi && description ? `${description}\n` : '';
-        return `${prefix}${formatTransparent(result)}`;
-      } catch (err: any) {
-        return `Error: ${err.message}`;
-      }
-    }
-
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
-    groups.forEach((groupExpr, idx) => {
-      const key = `roll_${idx + 1}`;
-      properties[key] = {
-        type: 'integer',
-        title: groupExpr,
-        description: `Enter your total for ${groupExpr}`,
-      };
-      required.push(key);
-    });
-
-    const message = description
-      ? `${description} — roll the dice for: ${expression}`
-      : `Roll the dice for: ${expression}`;
-
-    let elicitResult: z.infer<typeof ElicitResultSchema>;
-    try {
-      elicitResult = await (this.server as any).server.request(
-        {
-          method: 'elicitation/create',
-          params: { message, requestedSchema: { type: 'object', properties, required } },
-        },
-        ElicitResultSchema,
-      );
-    } catch {
-      return 'Error: this client does not support MCP elicitation. Use mode "system" or "transparent" instead.';
-    }
-
-    if (elicitResult.action !== 'accept' || !elicitResult.content) {
-      return null;
-    }
-
-    const userValues = Object.values(elicitResult.content) as number[];
-    let idx = 0;
-
-    try {
-      const result = this.parser.parse(expression, undefined, (_expr) => {
-        if (idx < userValues.length) return userValues[idx++];
-        return 1;
-      });
-      const prefix = !multi && description ? `${description}\n` : '';
-      return `${prefix}${formatTransparent(result)}`;
-    } catch (err: any) {
-      return `Error: ${err.message}`;
-    }
   }
 }
 
