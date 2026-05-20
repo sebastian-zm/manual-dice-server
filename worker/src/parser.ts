@@ -76,6 +76,26 @@ export class DiceParser {
   }
 
   private parseFactor(): DiceResult {
+    const remaining = this.input.slice(this.position);
+
+    if (remaining.startsWith('min(') || remaining.startsWith('max(')) {
+      const fn = remaining.startsWith('min(') ? 'min' : 'max';
+      this.position += fn.length + 1;
+      const args = this.parseFunctionArgs(fn);
+      if (this.peek() !== ')') {
+        throw new Error(`Missing closing parenthesis after ${fn}()`);
+      }
+      this.position++;
+      const totals = args.map(a => a.total);
+      const total = fn === 'min' ? Math.min(...totals) : Math.max(...totals);
+      return {
+        total,
+        rolls: args.flatMap(a => a.rolls),
+        expression: `${fn}(${args.map(a => a.expression).join(', ')})`,
+        breakdown: `${fn}(${args.map(a => a.breakdown).join(', ')}) = ${total}`,
+      };
+    }
+
     if (this.peek() === '(') {
       this.position++;
       const result = this.parseExpression();
@@ -87,6 +107,18 @@ export class DiceParser {
     }
 
     return this.parseDiceOrNumber();
+  }
+
+  private parseFunctionArgs(fn: string): DiceResult[] {
+    const args: DiceResult[] = [this.parseExpression()];
+    while (this.peek() === ',') {
+      this.position++;
+      args.push(this.parseExpression());
+    }
+    if (args.length < 2) {
+      throw new Error(`${fn}() requires at least 2 arguments`);
+    }
+    return args;
   }
 
   private parseDiceOrNumber(): DiceResult {
