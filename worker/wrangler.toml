@@ -3,6 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+[[custom_domains]]
+name = "dice.sebz.me"
+
 [durable_objects]
 bindings = [
   { name = "MCP_AGENT", class_name = "DiceRollerAgent" }
