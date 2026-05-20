@@ -15,10 +15,11 @@ const EXPRESSION_DESCRIPTION =
   'Supported notation:\n' +
   '• Basic: 2d6, d20, d% (percentile), 4dF (Fudge/FATE dice)\n' +
   '• Keep/Drop: 4d6k3 (keep highest 3), 5d8d2 (drop lowest 2)\n' +
-  '• Exploding: 3d6! (explode on max), 2d10e8 (explode on 8+)\n' +
-  '• Reroll: 4d6r1 (reroll 1s)\n' +
+  '• Exploding: 3d6! or 3d6e (explode on max), 2d10e8 or 2d10!8 (explode on 8+), 3d6!! (compound: chain collapses into one value)\n' +
+  '• Reroll: 4d6r1 (reroll any die showing ≤1, once, on the initial pool only; rN means N-or-lower)\n' +
   '• Functions: min(2d6, 3d4), max(d20, d12+5)\n' +
-  '• Math: d20+5, 2d6*3, (2d4+1)*2';
+  '• Math: d20+5, 2d6*3, (2d4+1)*2\n' +
+  'Modifier application order is always: reroll → explode → keep/drop, regardless of the order written.';
 
 const MODE_DESCRIPTION =
   '"system" returns just the total; ' +

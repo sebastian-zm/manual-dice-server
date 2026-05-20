@@ -3,6 +3,7 @@ export interface DiceModifiers {
   drop?: number;
   explode?: boolean;
   explodeOn?: number;
+  compound?: boolean;
   reroll?: number;
   negative?: boolean;
 }

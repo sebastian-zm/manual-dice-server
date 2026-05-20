@@ -197,20 +197,28 @@ export class DiceParser {
       const char = this.peek();
 
       if (char === 'k') {
+        if (modifiers.keep !== undefined) throw new Error("Duplicate 'k' modifier");
         this.position++;
         modifiers.keep = this.parseNumber() ?? undefined;
         if (!modifiers.keep) throw new Error("Missing number after 'k'");
       } else if (char === 'd' && /\d/.test(this.peek(1))) {
+        if (modifiers.drop !== undefined) throw new Error("Duplicate 'd' modifier");
         this.position++;
         modifiers.drop = this.parseNumber() ?? undefined;
         if (!modifiers.drop) throw new Error("Missing number after 'd'");
       } else if (char === '!' || char === 'e') {
+        if (modifiers.explode) throw new Error("Duplicate explode modifier");
         this.position++;
         modifiers.explode = true;
+        if (char === '!' && this.peek() === '!') {
+          this.position++;
+          modifiers.compound = true;
+        }
         if (/\d/.test(this.peek())) {
           modifiers.explodeOn = this.parseNumber() ?? undefined;
         }
       } else if (char === 'r') {
+        if (modifiers.reroll !== undefined) throw new Error("Duplicate 'r' modifier");
         this.position++;
         modifiers.reroll = this.parseNumber() ?? undefined;
         if (!modifiers.reroll) throw new Error("Missing number after 'r'");
@@ -257,7 +265,13 @@ export class DiceParser {
     let absExpr = `${count}d${sides}`;
     if (options.keep) absExpr += `k${options.keep}`;
     if (options.drop) absExpr += `d${options.drop}`;
-    if (options.explode) absExpr += options.explodeOn ? `e${options.explodeOn}` : '!';
+    if (options.explode) {
+      if (options.compound) {
+        absExpr += options.explodeOn ? `!!${options.explodeOn}` : '!!';
+      } else {
+        absExpr += options.explodeOn ? `e${options.explodeOn}` : '!';
+      }
+    }
     if (options.reroll) absExpr += `r${options.reroll}`;
 
     const expr = options.negative ? `-${absExpr}` : absExpr;
@@ -289,16 +303,32 @@ export class DiceParser {
 
       if (options.explode) {
         const explodeThreshold = options.explodeOn || sides;
-        const explosions: number[] = [];
         let explodeCount = 0;
-        while (roll >= explodeThreshold && explodeCount < 100) {
-          roll = this.rollFn(sides);
-          dieTotal += roll;
-          explosions.push(roll);
-          explodeCount++;
-        }
-        if (explosions.length > 0) {
-          display += `!${explosions.join('!')}`;
+        let capped = false;
+
+        if (options.compound) {
+          let currentRoll = roll;
+          while (currentRoll >= explodeThreshold) {
+            if (explodeCount >= 100) { capped = true; break; }
+            currentRoll = this.rollFn(sides);
+            dieTotal += currentRoll;
+            explodeCount++;
+          }
+          if (explodeCount > 0) {
+            display = `${dieTotal}${capped ? '…' : ''}`;
+          }
+        } else {
+          const explosions: number[] = [];
+          while (roll >= explodeThreshold) {
+            if (explodeCount >= 100) { capped = true; break; }
+            roll = this.rollFn(sides);
+            dieTotal += roll;
+            explosions.push(roll);
+            explodeCount++;
+          }
+          if (explosions.length > 0) {
+            display += `!${explosions.join('!')}${capped ? '…' : ''}`;
+          }
         }
       }
 
