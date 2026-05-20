@@ -290,15 +290,16 @@ export class DiceParser {
 
     for (let i = 0; i < count; i++) {
       let roll = this.rollFn(sides);
-      let display = String(roll);
+      let rerollPrefix = '';
 
       // Reroll first so explosion sees the final face value.
       if (options.reroll && roll <= options.reroll) {
         const newRoll = this.rollFn(sides);
-        display = `${roll}→${newRoll}`;
+        rerollPrefix = `${roll}→`;
         roll = newRoll;
       }
 
+      let display = `${rerollPrefix}${roll}`;
       let dieTotal = roll;
 
       if (options.explode) {
@@ -315,7 +316,7 @@ export class DiceParser {
             explodeCount++;
           }
           if (explodeCount > 0) {
-            display = `${dieTotal}${capped ? '…' : ''}`;
+            display = `${rerollPrefix}${dieTotal}${capped ? '…' : ''}`;
           }
         } else {
           const explosions: number[] = [];
