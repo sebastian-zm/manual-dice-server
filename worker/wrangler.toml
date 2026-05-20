@@ -3,8 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-[[custom_domains]]
-name = "dice.sebz.me"
+[[routes]]
+pattern = "dice.sebz.me"
+custom_domain = true
 
 [durable_objects]
 bindings = [
