@@ -25,6 +25,36 @@ const MODE_DESCRIPTION =
   '"transparent" shows per-group breakdown and the full evaluation chain; ' +
   '"user" prompts via MCP elicitation for each dice group so the user can roll physical dice';
 
+const MODE_DESCRIPTION_NO_ELICIT =
+  '"system" returns just the total; ' +
+  '"transparent" shows per-group breakdown and the full evaluation chain';
+
+const TOOL_DESCRIPTION =
+  'Roll dice. Use mode "system" for a quick total, "transparent" for the full breakdown, ' +
+  'or "user" to let the user enter results from physical dice via MCP elicitation. ' +
+  'Pass a comma-separated list to roll multiple expressions at once.';
+
+const TOOL_DESCRIPTION_NO_ELICIT =
+  'Roll dice. Use mode "system" for a quick total or "transparent" for the full breakdown. ' +
+  'Pass a comma-separated list to roll multiple expressions at once.';
+
+const DESCRIPTION_FIELD = z
+  .string()
+  .optional()
+  .describe('Optional label for this roll or group of rolls, e.g. "Attack roll"');
+
+const schemaWithUser = {
+  expression: z.string().describe(EXPRESSION_DESCRIPTION),
+  mode: z.enum(['system', 'transparent', 'user']).default('system').describe(MODE_DESCRIPTION),
+  description: DESCRIPTION_FIELD,
+};
+
+const schemaWithoutUser = {
+  expression: z.string().describe(EXPRESSION_DESCRIPTION),
+  mode: z.enum(['system', 'transparent']).default('system').describe(MODE_DESCRIPTION_NO_ELICIT),
+  description: DESCRIPTION_FIELD,
+};
+
 // Split on top-level commas only (not inside parentheses).
 function splitExpressions(expression: string): string[] {
   const parts: string[] = [];
@@ -61,19 +91,10 @@ export class DiceRollerAgent extends McpAgent {
   private parser = new DiceParser();
 
   async init() {
-    this.server.tool(
+    const tool = this.server.tool(
       'roll_dice',
-      'Roll dice. Use mode "system" for a quick total, "transparent" for the full breakdown, ' +
-        'or "user" to let the user enter results from physical dice via MCP elicitation. ' +
-        'Pass a comma-separated list to roll multiple expressions at once.',
-      {
-        expression: z.string().describe(EXPRESSION_DESCRIPTION),
-        mode: z.enum(['system', 'transparent', 'user']).default('system').describe(MODE_DESCRIPTION),
-        description: z
-          .string()
-          .optional()
-          .describe('Optional label for this roll or group of rolls, e.g. "Attack roll"'),
-      },
+      TOOL_DESCRIPTION,
+      schemaWithUser,
       async ({ expression, mode, description }) => {
         const exprs = splitExpressions(expression);
         const multi = exprs.length > 1;
@@ -87,6 +108,15 @@ export class DiceRollerAgent extends McpAgent {
         return this.rollUser(exprs, description, multi);
       },
     );
+
+    const prevOnInitialized = this.server.server.oninitialized;
+    this.server.server.oninitialized = () => {
+      prevOnInitialized?.();
+      const caps = this.server.server.getClientCapabilities();
+      if (!caps?.elicitation) {
+        tool.update({ description: TOOL_DESCRIPTION_NO_ELICIT, paramsSchema: schemaWithoutUser });
+      }
+    };
   }
 
   private rollSystem(exprs: string[], description: string | undefined, multi: boolean) {
