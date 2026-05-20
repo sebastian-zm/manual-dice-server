@@ -25,6 +25,12 @@ const MODE_DESCRIPTION =
   '"transparent" shows per-group breakdown and the full evaluation chain; ' +
   '"user" prompts via MCP elicitation for each dice group so the user can roll physical dice';
 
+const MODE_DESCRIPTION_USER_UNSUPPORTED =
+  '"system" returns just the total; ' +
+  '"transparent" shows per-group breakdown and the full evaluation chain; ' +
+  '"user" prompts via MCP elicitation for each dice group so the user can roll physical dice ' +
+  '(not supported by this client according to capability negotiation)';
+
 // Split on top-level commas only (not inside parentheses).
 function splitExpressions(expression: string): string[] {
   const parts: string[] = [];
@@ -61,7 +67,12 @@ export class DiceRollerAgent extends McpAgent {
   private parser = new DiceParser();
 
   async init() {
-    this.server.tool(
+    const descriptionField = z
+      .string()
+      .optional()
+      .describe('Optional label for this roll or group of rolls, e.g. "Attack roll"');
+
+    const tool = this.server.tool(
       'roll_dice',
       'Roll dice. Use mode "system" for a quick total, "transparent" for the full breakdown, ' +
         'or "user" to let the user enter results from physical dice via MCP elicitation. ' +
@@ -69,10 +80,7 @@ export class DiceRollerAgent extends McpAgent {
       {
         expression: z.string().describe(EXPRESSION_DESCRIPTION),
         mode: z.enum(['system', 'transparent', 'user']).default('system').describe(MODE_DESCRIPTION),
-        description: z
-          .string()
-          .optional()
-          .describe('Optional label for this roll or group of rolls, e.g. "Attack roll"'),
+        description: descriptionField,
       },
       async ({ expression, mode, description }) => {
         const exprs = splitExpressions(expression);
@@ -87,6 +95,21 @@ export class DiceRollerAgent extends McpAgent {
         return this.rollUser(exprs, description, multi);
       },
     );
+
+    const prevOnInitialized = this.server.server.oninitialized;
+    this.server.server.oninitialized = () => {
+      prevOnInitialized?.();
+      const caps = this.server.server.getClientCapabilities();
+      if (!caps?.elicitation) {
+        tool.update({
+          paramsSchema: {
+            expression: z.string().describe(EXPRESSION_DESCRIPTION),
+            mode: z.enum(['system', 'transparent', 'user']).default('system').describe(MODE_DESCRIPTION_USER_UNSUPPORTED),
+            description: descriptionField,
+          },
+        });
+      }
+    };
   }
 
   private rollSystem(exprs: string[], description: string | undefined, multi: boolean) {
