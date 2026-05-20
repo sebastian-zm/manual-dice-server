@@ -6,7 +6,7 @@ import { DiceResult } from './types';
 
 const ElicitResultSchema = z.object({
   action: z.enum(['accept', 'decline', 'cancel']),
-  content: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  content: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
 });
 
 const EXPRESSION_DESCRIPTION =
