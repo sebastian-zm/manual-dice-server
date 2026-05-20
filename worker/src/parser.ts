@@ -1,6 +1,7 @@
-import { DiceModifiers, DiceResult } from './types';
+import { DiceModifiers, DiceGroup, DiceResult } from './types';
 
 type RollFn = (sides: number) => number;
+type GroupRollFn = (expression: string) => number;
 
 const defaultRollFn: RollFn = (sides) => Math.floor(Math.random() * sides) + 1;
 
@@ -8,37 +9,40 @@ export class DiceParser {
   private position = 0;
   private input = '';
   private rollFn: RollFn = defaultRollFn;
+  private groupRollFn?: GroupRollFn;
+  private groups_: DiceGroup[] = [];
   private readonly MAX_NUMBER = 1000000;
   private readonly MAX_DICE_COUNT = 1000;
   private readonly MAX_DICE_SIDES = 10000;
 
-  parse(expression: string, rollFn?: RollFn): DiceResult {
+  parse(expression: string, rollFn?: RollFn, groupRollFn?: GroupRollFn): DiceResult {
     this.input = expression.toLowerCase().replace(/\s+/g, '');
     this.position = 0;
     this.rollFn = rollFn ?? defaultRollFn;
+    this.groupRollFn = groupRollFn;
+    this.groups_ = [];
 
     try {
       const result = this.parseExpression();
       if (this.position < this.input.length) {
         throw new Error(`Unexpected character at position ${this.position}: '${this.input[this.position]}'`);
       }
-      return result;
+      return { ...result, groups: [...this.groups_] };
     } catch (error: any) {
       throw new Error(`Parse error: ${error.message}`);
     }
   }
 
-  // Returns the ordered list of die sizes the expression would roll.
-  // Uses mid-range placeholder values so exploding dice don't add extra rolls.
-  listDice(expression: string): number[] {
-    const dice: number[] = [];
+  // Returns the dice group expressions in parse order, for user-mode elicitation.
+  listGroups(expression: string): string[] {
+    const groups: string[] = [];
     try {
-      this.parse(expression, (sides) => {
-        dice.push(sides);
-        return Math.ceil(sides / 2);
+      this.parse(expression, undefined, (expr) => {
+        groups.push(expr);
+        return 1;
       });
-    } catch { /* ignore */ }
-    return dice;
+    } catch { /* ignore parse errors — caller validates separately */ }
+    return groups;
   }
 
   private parseExpression(): DiceResult {
@@ -76,6 +80,21 @@ export class DiceParser {
   }
 
   private parseFactor(): DiceResult {
+    // Unary minus before ( or min/max — not handled by parseDiceOrNumber.
+    if (this.peek() === '-') {
+      const after = this.input.slice(this.position + 1);
+      if (after.startsWith('(') || after.startsWith('min(') || after.startsWith('max(')) {
+        this.position++;
+        const inner = this.parseFactor();
+        return {
+          ...inner,
+          total: -inner.total,
+          simplified: `-${inner.simplified}`,
+          expression: `-${inner.expression}`,
+        };
+      }
+    }
+
     const remaining = this.input.slice(this.position);
 
     if (remaining.startsWith('min(') || remaining.startsWith('max(')) {
@@ -90,9 +109,9 @@ export class DiceParser {
       const total = fn === 'min' ? Math.min(...totals) : Math.max(...totals);
       return {
         total,
-        rolls: args.flatMap(a => a.rolls),
+        groups: [],
         expression: `${fn}(${args.map(a => a.expression).join(', ')})`,
-        breakdown: `${fn}(${args.map(a => a.breakdown).join(', ')}) = ${total}`,
+        simplified: `${fn}(${args.map(a => a.simplified).join(', ')})`,
       };
     }
 
@@ -103,7 +122,11 @@ export class DiceParser {
         throw new Error('Missing closing parenthesis');
       }
       this.position++;
-      return result;
+      return {
+        ...result,
+        simplified: `(${result.simplified})`,
+        expression: `(${result.expression})`,
+      };
     }
 
     return this.parseDiceOrNumber();
@@ -158,11 +181,12 @@ export class DiceParser {
       throw new Error(`Expected number or dice notation at position ${start}`);
     }
 
+    const value = negative ? -count : count;
     return {
-      total: negative ? -count : count,
-      rolls: [],
-      expression: negative ? `-${count}` : count.toString(),
-      breakdown: negative ? `-${count}` : count.toString(),
+      total: value,
+      groups: [],
+      expression: String(value),
+      simplified: String(value),
     };
   }
 
@@ -229,19 +253,34 @@ export class DiceParser {
       throw new Error('Total possible outcomes too large');
     }
 
+    // Build the canonical group expression (without leading minus).
+    let absExpr = `${count}d${sides}`;
+    if (options.keep) absExpr += `k${options.keep}`;
+    if (options.drop) absExpr += `d${options.drop}`;
+    if (options.explode) absExpr += options.explodeOn ? `e${options.explodeOn}` : '!';
+    if (options.reroll) absExpr += `r${options.reroll}`;
+
+    const expr = options.negative ? `-${absExpr}` : absExpr;
+
+    // Group-level substitution: user supplied the group total directly.
+    if (this.groupRollFn) {
+      const userTotal = this.groupRollFn(absExpr);
+      const total = options.negative ? -userTotal : userTotal;
+      this.groups_.push({ expression: absExpr, display: String(userTotal), total: userTotal });
+      return { total, groups: [], expression: expr, simplified: String(total) };
+    }
+
+    // Normal per-die rolling.
     const dieTotals: number[] = [];
     const dieDisplays: string[] = [];
-    const allRolls: number[] = [];
 
     for (let i = 0; i < count; i++) {
       let roll = this.rollFn(sides);
-      allRolls.push(roll);
-      let display = `${roll}`;
+      let display = String(roll);
 
       // Reroll first so explosion sees the final face value.
       if (options.reroll && roll <= options.reroll) {
         const newRoll = this.rollFn(sides);
-        allRolls.push(newRoll);
         display = `${roll}→${newRoll}`;
         roll = newRoll;
       }
@@ -254,7 +293,6 @@ export class DiceParser {
         let explodeCount = 0;
         while (roll >= explodeThreshold && explodeCount < 100) {
           roll = this.rollFn(sides);
-          allRolls.push(roll);
           dieTotal += roll;
           explosions.push(roll);
           explodeCount++;
@@ -285,21 +323,16 @@ export class DiceParser {
     }
 
     const sum = finalTotals.reduce((s, r) => s + r, 0);
-    const total = sum * (options.negative ? -1 : 1);
+    const total = options.negative ? -sum : sum;
 
-    let expr = `${count}d${sides}`;
-    if (options.keep) expr += `k${options.keep}`;
-    if (options.drop) expr += `d${options.drop}`;
-    if (options.explode) expr += options.explodeOn ? `e${options.explodeOn}` : '!';
-    if (options.reroll) expr += `r${options.reroll}`;
-    if (options.negative) expr = `-${expr}`;
+    let groupDisplay = `[${dieDisplays.join(', ')}]`;
+    if (options.keep || options.drop) {
+      groupDisplay += ` → [${finalDisplays.join(', ')}]`;
+    }
+    groupDisplay += ` = ${sum}`;
 
-    return {
-      total,
-      rolls: allRolls,
-      expression: expr,
-      breakdown: this.buildBreakdown(dieDisplays, finalDisplays, sum, options),
-    };
+    this.groups_.push({ expression: absExpr, display: groupDisplay, total: sum });
+    return { total, groups: [], expression: expr, simplified: String(total) };
   }
 
   private rollFudgeDice(count: number, options: { negative?: boolean } = {}): DiceResult {
@@ -307,53 +340,46 @@ export class DiceParser {
       throw new Error(`Dice count must be between 1 and ${this.MAX_DICE_COUNT}`);
     }
 
+    const absExpr = `${count}dF`;
+    const expr = options.negative ? `-${absExpr}` : absExpr;
+
+    if (this.groupRollFn) {
+      const userTotal = this.groupRollFn(absExpr);
+      const total = options.negative ? -userTotal : userTotal;
+      this.groups_.push({ expression: absExpr, display: String(userTotal), total: userTotal });
+      return { total, groups: [], expression: expr, simplified: String(total) };
+    }
+
     const rolls: number[] = [];
     for (let i = 0; i < count; i++) {
-      // rollFn(3) → 1/2/3; subtract 2 to get -1/0/+1
       rolls.push(this.rollFn(3) - 2);
     }
 
-    const total = rolls.reduce((sum, roll) => sum + roll, 0) * (options.negative ? -1 : 1);
+    const sum = rolls.reduce((s, r) => s + r, 0);
+    const total = options.negative ? -sum : sum;
     const symbols = rolls.map(r => (r === -1 ? '[-]' : r === 0 ? '[ ]' : '[+]'));
+    const groupDisplay = `${symbols.join(' ')} = ${sum}`;
 
-    return {
-      total,
-      rolls,
-      expression: `${options.negative ? '-' : ''}${count}dF`,
-      breakdown: `${symbols.join(' ')} = ${total}`,
-    };
-  }
-
-  private buildBreakdown(
-    originalDisplays: string[],
-    finalDisplays: string[],
-    sum: number,
-    options: DiceModifiers,
-  ): string {
-    let breakdown = `[${originalDisplays.join(', ')}]`;
-    if (options.keep || options.drop) {
-      breakdown += ` → [${finalDisplays.join(', ')}]`;
-    }
-    breakdown += ` = ${sum}`;
-    return breakdown;
+    this.groups_.push({ expression: absExpr, display: groupDisplay, total: sum });
+    return { total, groups: [], expression: expr, simplified: String(total) };
   }
 
   private combineResults(left: DiceResult, right: DiceResult, operator: string): DiceResult {
     const total = operator === '+' ? left.total + right.total : left.total - right.total;
     return {
       total,
-      rolls: [...left.rolls, ...right.rolls],
-      expression: `${left.expression} ${operator} ${right.expression}`,
-      breakdown: `${left.breakdown} ${operator} ${right.breakdown} = ${total}`,
+      groups: [],
+      expression: `${left.expression}${operator}${right.expression}`,
+      simplified: `${left.simplified} ${operator} ${right.simplified}`,
     };
   }
 
   private multiplyResults(left: DiceResult, right: DiceResult): DiceResult {
     return {
       total: left.total * right.total,
-      rolls: [...left.rolls, ...right.rolls],
-      expression: `${left.expression} × ${right.expression}`,
-      breakdown: `(${left.breakdown}) × (${right.breakdown}) = ${left.total * right.total}`,
+      groups: [],
+      expression: `${left.expression}×${right.expression}`,
+      simplified: `${left.simplified} × ${right.simplified}`,
     };
   }
 }

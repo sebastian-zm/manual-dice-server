@@ -2,6 +2,7 @@ import { McpAgent } from 'agents/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { DiceParser } from './parser';
+import { DiceResult } from './types';
 
 const ElicitResultSchema = z.object({
   action: z.enum(['accept', 'decline', 'cancel']),
@@ -19,13 +20,10 @@ const EXPRESSION_DESCRIPTION =
   '• Functions: min(2d6, 3d4), max(d20, d12+5)\n' +
   '• Math: d20+5, 2d6*3, (2d4+1)*2';
 
-const DESCRIPTION_DESCRIPTION =
-  'Optional label for this roll or group of rolls, e.g. "Attack roll" or "Saving throw"';
-
-const sharedParams = {
-  expression: z.string().describe(EXPRESSION_DESCRIPTION),
-  description: z.string().optional().describe(DESCRIPTION_DESCRIPTION),
-};
+const MODE_DESCRIPTION =
+  '"system" returns just the total; ' +
+  '"transparent" shows per-group breakdown and the full evaluation chain; ' +
+  '"user" prompts via MCP elicitation for each dice group so the user can roll physical dice';
 
 // Split on top-level commas only (not inside parentheses).
 function splitExpressions(expression: string): string[] {
@@ -46,6 +44,18 @@ function splitExpressions(expression: string): string[] {
   return parts.length ? parts : [expression.trim()];
 }
 
+// Formats a parsed result with per-group breakdown + evaluation chain.
+function formatTransparent(result: DiceResult): string {
+  const lines: string[] = result.groups.map(g => `${g.expression}: ${g.display}`);
+  const isSimple = result.simplified === String(result.total);
+  lines.push(
+    isSimple
+      ? `${result.expression} = ${result.total}`
+      : `${result.expression} = ${result.simplified} = ${result.total}`,
+  );
+  return lines.join('\n');
+}
+
 export class DiceRollerAgent extends McpAgent {
   server = new McpServer({ name: 'dice-roller', version: '1.0.0' });
   private parser = new DiceParser();
@@ -53,110 +63,106 @@ export class DiceRollerAgent extends McpAgent {
   async init() {
     this.server.tool(
       'roll_dice',
-      'Roll dice and return just the total for each expression. Use for quick rolls where only the number matters.',
-      sharedParams,
-      ({ expression, description }) => {
-        const exprs = splitExpressions(expression);
-        const multi = exprs.length > 1;
-        const lines: string[] = [];
-
-        for (const expr of exprs) {
-          try {
-            const result = this.parser.parse(expr);
-            lines.push(multi ? `${result.expression}: ${result.total}` : `${result.total}`);
-          } catch (err: any) {
-            lines.push(`${expr}: Error: ${err.message}`);
-          }
-        }
-
-        const header = description ? (multi ? `${description}\n` : `${description}: `) : '';
-        const body = multi ? lines.join('\n') : lines[0];
-        return { content: [{ type: 'text' as const, text: `${header}${body}` }] };
+      'Roll dice. Use mode "system" for a quick total, "transparent" for the full breakdown, ' +
+        'or "user" to let the user enter results from physical dice via MCP elicitation. ' +
+        'Pass a comma-separated list to roll multiple expressions at once.',
+      {
+        expression: z.string().describe(EXPRESSION_DESCRIPTION),
+        mode: z.enum(['system', 'transparent', 'user']).default('system').describe(MODE_DESCRIPTION),
+        description: z
+          .string()
+          .optional()
+          .describe('Optional label for this roll or group of rolls, e.g. "Attack roll"'),
       },
-    );
-
-    this.server.tool(
-      'roll_dice_transparent',
-      'Roll dice with full per-die breakdown and calculation steps. Use when the user wants to see the math or verify a roll.',
-      sharedParams,
-      ({ expression, description }) => {
+      async ({ expression, mode, description }) => {
         const exprs = splitExpressions(expression);
         const multi = exprs.length > 1;
-        const blocks: string[] = [];
 
-        for (const expr of exprs) {
-          try {
-            const result = this.parser.parse(expr);
-            blocks.push(`${result.expression}\n${result.breakdown}\nTotal: ${result.total}`);
-          } catch (err: any) {
-            blocks.push(`${expr}: Error: ${err.message}`);
-          }
+        if (mode === 'system') {
+          return this.rollSystem(exprs, description, multi);
         }
-
-        const header = description ? `${description}\n` : '';
-        return { content: [{ type: 'text' as const, text: `${header}${blocks.join('\n\n')}` }] };
-      },
-    );
-
-    this.server.tool(
-      'roll_dice_user',
-      [
-        'Prompt the user to enter their own physical dice results via MCP elicitation.',
-        'Use when the user wants to roll real dice and supply the values manually.',
-        'Pass a comma-separated list to handle multiple expressions in one call; each gets its own prompt.',
-        'Requires a client that supports MCP elicitation; returns an error otherwise.',
-        'Note: for exploding/reroll expressions only the initial dice are elicited —',
-        'any further triggered rolls (chain explosions) are resolved automatically.',
-      ].join(' '),
-      sharedParams,
-      async ({ expression, description }) => {
-        const exprs = splitExpressions(expression);
-        const multi = exprs.length > 1;
-        const blocks: string[] = [];
-
-        for (const expr of exprs) {
-          const block = await this.rollOneUser(expr, description, multi);
-          if (block === null) {
-            return { content: [{ type: 'text' as const, text: 'Roll cancelled.' }] };
-          }
-          blocks.push(block);
+        if (mode === 'transparent') {
+          return this.rollTransparent(exprs, description, multi);
         }
-
-        const header = description && multi ? `${description}\n` : '';
-        return { content: [{ type: 'text' as const, text: `${header}${blocks.join('\n\n')}` }] };
+        return this.rollUser(exprs, description, multi);
       },
     );
   }
 
-  // Returns the formatted result block for one expression, or null if the user cancelled.
+  private rollSystem(exprs: string[], description: string | undefined, multi: boolean) {
+    const lines: string[] = [];
+    for (const expr of exprs) {
+      try {
+        const result = this.parser.parse(expr);
+        lines.push(multi ? `${result.expression}: ${result.total}` : String(result.total));
+      } catch (err: any) {
+        lines.push(`${expr}: Error: ${err.message}`);
+      }
+    }
+    const header = description ? (multi ? `${description}\n` : `${description}: `) : '';
+    return { content: [{ type: 'text' as const, text: `${header}${lines.join('\n')}` }] };
+  }
+
+  private rollTransparent(exprs: string[], description: string | undefined, multi: boolean) {
+    const blocks: string[] = [];
+    for (const expr of exprs) {
+      try {
+        blocks.push(formatTransparent(this.parser.parse(expr)));
+      } catch (err: any) {
+        blocks.push(`${expr}: Error: ${err.message}`);
+      }
+    }
+    const header = description ? `${description}\n` : '';
+    return { content: [{ type: 'text' as const, text: `${header}${blocks.join('\n\n')}` }] };
+  }
+
+  private async rollUser(exprs: string[], description: string | undefined, multi: boolean) {
+    const blocks: string[] = [];
+
+    for (const expr of exprs) {
+      const block = await this.rollOneUser(expr, description, multi);
+      if (block === null) {
+        return { content: [{ type: 'text' as const, text: 'Roll cancelled.' }] };
+      }
+      blocks.push(block);
+    }
+
+    const header = description && multi ? `${description}\n` : '';
+    return { content: [{ type: 'text' as const, text: `${header}${blocks.join('\n\n')}` }] };
+  }
+
+  // Returns the formatted result block, or null if the user cancelled.
   private async rollOneUser(
     expression: string,
     description: string | undefined,
     multi: boolean,
   ): Promise<string | null> {
-    let diceNeeded: number[];
+    let groups: string[];
     try {
-      diceNeeded = this.parser.listDice(expression);
+      groups = this.parser.listGroups(expression);
     } catch (err: any) {
       return `Error: ${err.message}`;
     }
 
-    if (diceNeeded.length === 0) {
-      const result = this.parser.parse(expression);
-      const prefix = !multi && description ? `${description}\n` : '';
-      return `${prefix}${result.expression}\n${result.breakdown}\nTotal: ${result.total}`;
+    if (groups.length === 0) {
+      // Pure arithmetic — nothing to elicit.
+      try {
+        const result = this.parser.parse(expression);
+        const prefix = !multi && description ? `${description}\n` : '';
+        return `${prefix}${formatTransparent(result)}`;
+      } catch (err: any) {
+        return `Error: ${err.message}`;
+      }
     }
 
     const properties: Record<string, unknown> = {};
     const required: string[] = [];
-    diceNeeded.forEach((sides, idx) => {
+    groups.forEach((groupExpr, idx) => {
       const key = `roll_${idx + 1}`;
       properties[key] = {
         type: 'integer',
-        minimum: 1,
-        maximum: sides,
-        title: `d${sides}`,
-        description: `Enter your d${sides} result (1–${sides})`,
+        title: groupExpr,
+        description: `Enter your total for ${groupExpr}`,
       };
       required.push(key);
     });
@@ -175,7 +181,7 @@ export class DiceRollerAgent extends McpAgent {
         ElicitResultSchema,
       );
     } catch {
-      return 'Error: this client does not support MCP elicitation. Use roll_dice or roll_dice_transparent instead.';
+      return 'Error: this client does not support MCP elicitation. Use mode "system" or "transparent" instead.';
     }
 
     if (elicitResult.action !== 'accept' || !elicitResult.content) {
@@ -186,12 +192,12 @@ export class DiceRollerAgent extends McpAgent {
     let idx = 0;
 
     try {
-      const result = this.parser.parse(expression, (sides) => {
+      const result = this.parser.parse(expression, undefined, (_expr) => {
         if (idx < userValues.length) return userValues[idx++];
-        return Math.floor(Math.random() * sides) + 1;
+        return 1;
       });
       const prefix = !multi && description ? `${description}\n` : '';
-      return `${prefix}${result.expression}\n${result.breakdown}\nTotal: ${result.total}`;
+      return `${prefix}${formatTransparent(result)}`;
     } catch (err: any) {
       return `Error: ${err.message}`;
     }
