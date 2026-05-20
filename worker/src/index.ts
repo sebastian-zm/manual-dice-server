@@ -205,7 +205,7 @@ export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname.startsWith('/mcp')) {
-      return DiceRollerAgent.mount('/mcp').fetch(req, env, ctx);
+      return DiceRollerAgent.serve('/mcp', { binding: 'MCP_AGENT' }).fetch(req, env, ctx);
     }
     return Promise.resolve(new Response('Not found', { status: 404 }));
   },
