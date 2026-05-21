@@ -64,7 +64,7 @@ function formatTransparent(result: DiceResult): string {
 }
 
 export class DiceRollerAgent extends McpAgent {
-  server = new McpServer({ name: 'dice-roller', version: '1.0.0' });
+  server = new McpServer({ name: 'dice-roller', version: '1.0.0', capabilities: { elicitation: {} } });
   private parser = new DiceParser();
 
   async init() {
