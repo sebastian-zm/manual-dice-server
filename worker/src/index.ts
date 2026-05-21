@@ -64,7 +64,7 @@ function formatTransparent(result: DiceResult): string {
 }
 
 export class DiceRollerAgent extends McpAgent {
-  server = new McpServer({ name: 'dice-roller', version: '1.0.0', capabilities: { elicitation: {} } });
+  server = new McpServer({ name: 'dice-roller', version: '1.0.0', capabilities: {} });
   private parser = new DiceParser();
 
   async init() {
@@ -101,6 +101,7 @@ export class DiceRollerAgent extends McpAgent {
     this.server.server.oninitialized = () => {
       prevOnInitialized?.();
       const caps = this.server.server.getClientCapabilities();
+      console.log('Client capabilities:', JSON.stringify(caps));
       if (!caps?.elicitation) {
         tool.update({
           paramsSchema: {
